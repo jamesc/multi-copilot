@@ -1,0 +1,18 @@
+{
+  "banner": "never",
+  "render_markdown": true,
+  "theme": "auto",
+  "model": "claude-sonnet-4.5",
+  "trusted_folders": ["${containerWorkspaceFolder}"],
+  "allowed_urls": [
+    "https://api.github.com",
+    "https://docs.github.com"
+  ],
+  "experimental": true,
+  "log_level": "info",
+  "default_permissions": {
+    "tools": "allow",
+    "paths": "allow",
+    "urls": "allow"
+  }
+}
