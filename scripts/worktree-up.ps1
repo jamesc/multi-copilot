@@ -196,9 +196,44 @@ else {
     try {
         $existingWorktree = Get-WorktreePath -BranchName $Branch
         
-        if ($existingWorktree) {
+        if ($existingWorktree -and (Test-Path $existingWorktree)) {
+            # Worktree exists and is accessible from Windows
             Write-Host "✅ Worktree already exists at: $existingWorktree" -ForegroundColor Green
             $worktreePath = $existingWorktree
+        }
+        elseif ($existingWorktree) {
+            # Worktree metadata exists but path is inaccessible (likely orphaned container path)
+            Write-Host "⚠️  Worktree metadata exists but path inaccessible: $existingWorktree" -ForegroundColor Yellow
+            Write-Host "🔄 Removing orphaned worktree and recreating..." -ForegroundColor Cyan
+            git worktree remove $Branch --force 2>$null
+            
+            # Create new worktree at proper Windows path
+            $dirName = $Branch -replace '/', '-'
+            $worktreePath = Join-Path $WorktreeRoot $dirName
+            
+            # Remove directory if it exists (may be leftover from previous container)
+            if (Test-Path $worktreePath) {
+                Write-Host "🗑️  Removing existing directory: $worktreePath" -ForegroundColor Gray
+                try {
+                    Remove-Item -Path $worktreePath -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Host "❌ Cannot remove directory (may be in use by container)" -ForegroundColor Red
+                    Write-Host "   Run: .\scripts\worktree-down.ps1 $Branch" -ForegroundColor Gray
+                    Write-Host "   Or:  docker stop <container-id>" -ForegroundColor Gray
+                    exit 1
+                }
+            }
+            
+            Write-Host "📌 Recreating worktree for branch: $Branch" -ForegroundColor Yellow
+            git worktree add $worktreePath $Branch
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "❌ Failed to recreate worktree" -ForegroundColor Red
+                exit 1
+            }
+            
+            Write-Host "✅ Worktree recreated at: $worktreePath" -ForegroundColor Green
         }
         else {
             # Create new worktree
@@ -228,26 +263,31 @@ else {
     }
 }
 
-# Update worktree with latest changes from remote
-Write-Host "🔄 Updating worktree with latest changes..." -ForegroundColor Cyan
-Push-Location $worktreePath
-try {
-    $trackingBranch = git rev-parse --abbrev-ref "@{upstream}" 2>$null
-    if ($trackingBranch) {
-        git pull --ff-only 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "✅ Worktree updated" -ForegroundColor Green
+# Update worktree with latest changes from remote (only if accessible from Windows)
+if (Test-Path $worktreePath) {
+    Write-Host "🔄 Updating worktree with latest changes..." -ForegroundColor Cyan
+    Push-Location $worktreePath
+    try {
+        $trackingBranch = git rev-parse --abbrev-ref "@{upstream}" 2>$null
+        if ($trackingBranch) {
+            git pull --ff-only 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ Worktree updated" -ForegroundColor Green
+            }
+            else {
+                Write-Host "⚠️  Could not fast-forward, may need manual merge" -ForegroundColor Yellow
+            }
         }
         else {
-            Write-Host "⚠️  Could not fast-forward, may need manual merge" -ForegroundColor Yellow
+            Write-Host "ℹ️  No upstream tracking branch, skipping pull" -ForegroundColor Gray
         }
     }
-    else {
-        Write-Host "ℹ️  No upstream tracking branch, skipping pull" -ForegroundColor Gray
+    finally {
+        Pop-Location
     }
 }
-finally {
-    Pop-Location
+else {
+    Write-Host "ℹ️  Worktree path not accessible from host, will update in container" -ForegroundColor Gray
 }
 
 # Check for devcontainer CLI
@@ -428,15 +468,46 @@ finally {
     Write-Host "`n🔧 Resetting .git paths for host..." -ForegroundColor Cyan
     
     # Reset worktree .git file to point to host path
+    # (retry a few times in case file is briefly locked by container shutdown)
     $hostGitPath = Join-Path $env:MAIN_GIT_PATH "worktrees" $worktreeName
-    Set-Content -Path $worktreeGitFile -Value "gitdir: $hostGitPath" -NoNewline -Encoding utf8NoBOM
-    Write-Host "   Set .git to: $hostGitPath" -ForegroundColor Gray
+    $retries = 5
+    $retryDelay = 1
+    $success = $false
     
-    # Reset gitdir in main repo's worktree metadata to host path
-    if (Test-Path $worktreeMetaGitdir) {
-        Set-Content -Path $worktreeMetaGitdir -Value $worktreePath -NoNewline -Encoding utf8NoBOM
-        Write-Host "   Set gitdir to: $worktreePath" -ForegroundColor Gray
+    for ($i = 0; $i -lt $retries; $i++) {
+        try {
+            Set-Content -Path $worktreeGitFile -Value "gitdir: $hostGitPath" -NoNewline -Encoding utf8NoBOM -ErrorAction Stop
+            $success = $true
+            break
+        }
+        catch {
+            if ($i -lt ($retries - 1)) {
+                Write-Host "   Waiting for file lock to release... (attempt $($i+1)/$retries)" -ForegroundColor Gray
+                Start-Sleep -Seconds $retryDelay
+            }
+        }
     }
     
-    Write-Host "✅ Git paths restored for host" -ForegroundColor Green
+    if (-not $success) {
+        Write-Host "⚠️  Could not reset .git file (still locked). You may need to:" -ForegroundColor Yellow
+        Write-Host "   1. Wait a moment for container to fully stop" -ForegroundColor Gray
+        Write-Host "   2. Manually edit: $worktreeGitFile" -ForegroundColor Gray
+        Write-Host "   3. Set content to: gitdir: $hostGitPath" -ForegroundColor Gray
+    }
+    else {
+        Write-Host "   Set .git to: $hostGitPath" -ForegroundColor Gray
+        
+        # Reset gitdir in main repo's worktree metadata to host path
+        if (Test-Path $worktreeMetaGitdir) {
+            try {
+                Set-Content -Path $worktreeMetaGitdir -Value $worktreePath -NoNewline -Encoding utf8NoBOM -ErrorAction Stop
+                Write-Host "   Set gitdir to: $worktreePath" -ForegroundColor Gray
+            }
+            catch {
+                Write-Host "⚠️  Could not reset gitdir file (still locked)" -ForegroundColor Yellow
+            }
+        }
+        
+        Write-Host "✅ Git paths restored for host" -ForegroundColor Green
+    }
 }
