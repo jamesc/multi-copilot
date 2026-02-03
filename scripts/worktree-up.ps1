@@ -43,7 +43,7 @@ param(
     [string]$WorktreeRoot = "",
     
     [Parameter(Mandatory=$false)]
-    [string]$Command = "copilot"
+    [string]$Command = "copilot --yolo"
 )
 
 $ErrorActionPreference = "Stop"
@@ -420,7 +420,8 @@ Write-Host "`nStarting: $Command" -ForegroundColor Cyan
 # Connect to the container and run the command
 # Use try/finally to ensure git paths are reset when command exits
 try {
-    devcontainer exec --workspace-folder $worktreePath $Command.Split(' ')
+    $cmdArgs = @("exec", "--workspace-folder", $worktreePath) + $Command.Split(' ')
+    & devcontainer @cmdArgs
 }
 finally {
     # Reset git paths back to host paths
