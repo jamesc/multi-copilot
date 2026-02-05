@@ -31,13 +31,32 @@ Start a Copilot devcontainer session for a git worktree branch. This enables run
 
 ### What it does
 
-1. **Checks if worktree exists** for the branch
-2. **Creates worktree** if needed (new branch from base, or existing branch)
-3. **Starts the devcontainer** using `devcontainer up`
-4. **Configures Copilot CLI** with config and MCP servers
-5. **Launches Copilot** in the container
+1. **Checks if container is running** - if yes, reconnects immediately
+2. **Checks if worktree exists** for the branch
+3. **Creates worktree** if needed (new branch from base, or existing branch)
+4. **Starts the devcontainer** using `devcontainer up`
+5. **Configures Copilot CLI** with config and MCP servers
+6. **Launches Copilot** in the container
 
 You'll get a shell inside the container where you can run Copilot CLI or other tools.
+
+### Reconnecting to an Existing Container
+
+The script supports a "generic workspace" workflow where you:
+
+1. Create a worktree: `worktree-up.ps1 design-sessions`
+2. Work inside, create branches for fixes, push them
+3. Disconnect from the container
+4. Reconnect later: `worktree-up.ps1 design-sessions`
+
+The **worktree name is the container identity**, not the branch. If you switch branches inside the container (e.g., from `design-sessions` to `fix-typo`), reconnecting will preserve your current branch - it won't try to switch back.
+
+```
+🚀 Starting worktree session: design-sessions
+✅ Container already running for worktree: design-sessions
+   Note: Currently on branch 'fix-typo' (worktree was created as 'design-sessions')
+🔌 Reconnecting to existing container...
+```
 
 ### Prerequisites
 
