@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Fast path reconnection** - When a container is already running for a worktree, `worktree-up.ps1` skips worktree/container setup and reconnects directly.
 
 ### Changed
-- **Devcontainer config synced from main** - `worktree-up.ps1` now syncs `.devcontainer/` from the main repo to the worktree before starting the container. Ensures worktrees created from old commits use the latest devcontainer config.
+- **Devcontainer config synced from primary worktree** - `worktree-up.ps1` now syncs `.devcontainer/` from the primary worktree (repo root) to new worktrees before starting the container. Ensures worktrees created from old commits use the current devcontainer config.
 - **Hooks loaded from worktree** - Project hooks are loaded from the worktree path (not main repo), so reconnects use the version that was synced when the worktree was created or last updated.
 - **Default command changed to `copilot --yolo`** - The default exec command is now `copilot --yolo` instead of requiring explicit command specification.
 
