@@ -95,6 +95,8 @@ Git worktrees allow multiple working directories linked to the same repository. 
 
 Worktrees are created in `.worktrees/` inside your repo (gitignored).
 
+**Branch Switching**: You can switch branches inside a worktree with `git checkout`. The scripts identify worktrees by directory name (not current branch), so `worktree-up` and `worktree-down` work correctly even after switching branches.
+
 ### Devcontainers
 
 Each worktree gets its own Docker container with:

@@ -124,15 +124,32 @@ function Test-BranchExists {
 
 # Check if worktree exists for branch
 function Get-WorktreePath {
-    param([string]$BranchName)
+    param(
+        [string]$BranchName,
+        [string]$WorktreeRoot
+    )
     
+    # Sanitize branch name to match directory name
+    $dirName = $BranchName -replace '/', '-'
+    $expectedPath = Join-Path $WorktreeRoot $dirName
+    
+    # Check if this directory exists as a worktree
     $worktrees = git worktree list --porcelain 2>$null
+    $wtPath = $null
     foreach ($line in $worktrees) {
         if ($line -match "^worktree\s+(.+)") {
             $wtPath = $matches[1]
-        }
-        if ($line -match "^branch\s+refs/heads/(.+)" -and $matches[1] -eq $BranchName) {
-            return $wtPath
+            
+            # Convert container path to host path if needed
+            if ($wtPath -match "^/workspaces/(.+)$") {
+                $folderName = $matches[1]
+                $wtPath = Join-Path $WorktreeRoot $folderName
+            }
+            
+            # Match by directory name, not branch name
+            if ($wtPath -eq $expectedPath) {
+                return $wtPath
+            }
         }
     }
     return $null
@@ -231,7 +248,7 @@ else {
     # Check if worktree already exists
     Push-Location $mainRepo
     try {
-        $existingWorktree = Get-WorktreePath -BranchName $Branch
+        $existingWorktree = Get-WorktreePath -BranchName $Branch -WorktreeRoot $WorktreeRoot
         
         if ($existingWorktree -and (Test-Path $existingWorktree)) {
             # Worktree exists and is accessible from Windows
