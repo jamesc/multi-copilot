@@ -211,6 +211,24 @@ try {
     # Stop devcontainer FIRST (before removing worktree to release file locks)
     Remove-DevContainer -WorktreePath $worktreePath
     
+    # Run project-specific hook if it exists (for custom cleanup like volumes)
+    $hookScript = Join-Path $worktreePath ".devcontainer\worktree-down-hook.ps1"
+    if (Test-Path $hookScript) {
+        Write-Host "🔧 Running project cleanup hook..." -ForegroundColor Cyan
+        try {
+            & $hookScript -WorktreePath $worktreePath -Branch $Branch -MainRepo $mainRepo
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ Project cleanup hook completed" -ForegroundColor Green
+            }
+            else {
+                Write-Host "⚠️  Project cleanup hook returned non-zero exit code" -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Host "⚠️  Project cleanup hook failed: $_" -ForegroundColor Yellow
+        }
+    }
+    
     # Check if the .git file in the worktree needs fixing
     $gitFile = Join-Path $worktreePath ".git"
     if (Test-Path $gitFile -PathType Leaf) {
