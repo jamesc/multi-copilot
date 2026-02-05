@@ -299,6 +299,7 @@ else {
         Pop-Location
     }
 }
+} # End of: if (-not $skipWorktreeSetup) for worktree creation
 
 # Update worktree with latest changes from remote (skip if container already running)
 if (-not $skipWorktreeSetup) {
