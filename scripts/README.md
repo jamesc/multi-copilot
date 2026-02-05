@@ -126,6 +126,29 @@ $env:GIT_SIGNING_KEY = "id_ed25519"
 
 ## Customization
 
+### Project-Specific Worktree Hook
+
+Create `.devcontainer/worktree-up-hook.ps1` to run custom setup for each worktree. The hook is called every time `worktree-up.ps1` runs (both for new containers and reconnections).
+
+```powershell
+# .devcontainer/worktree-up-hook.ps1
+param(
+    [string]$WorktreePath,
+    [string]$Branch,
+    [string]$MainRepo
+)
+
+# Example: Create per-worktree .env file
+$port = 8080 + (Get-Random -Maximum 1000)
+"API_PORT=$port" | Out-File "$WorktreePath\.env" -Encoding utf8
+Write-Host "   Created .env with port $port" -ForegroundColor Gray
+```
+
+**Parameters passed to hook:**
+- `$WorktreePath` - Full path to the worktree directory
+- `$Branch` - Branch name (or worktree name if different)
+- `$MainRepo` - Path to the main repository
+
 ### Adding Project-Specific Environment
 
 Edit `devcontainer.json` to add environment variables via `containerEnv` or `remoteEnv`:
