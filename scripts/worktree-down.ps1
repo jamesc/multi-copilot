@@ -83,19 +83,27 @@ function Get-WorktreePath {
         [string]$WorktreeRoot
     )
     
+    # Sanitize branch name to match directory name (same as worktree-up.ps1)
+    $dirName = $BranchName -replace '/', '-'
+    $expectedPath = Join-Path $WorktreeRoot $dirName
+    
+    # Check if this directory exists as a worktree
     $worktrees = git worktree list --porcelain 2>$null
     $wtPath = $null
     foreach ($line in $worktrees) {
         if ($line -match "^worktree\s+(.+)") {
             $wtPath = $matches[1]
-        }
-        if ($line -match "^branch\s+refs/heads/(.+)" -and $matches[1] -eq $BranchName) {
+            
             # Convert container path to host path if needed
             if ($wtPath -match "^/workspaces/(.+)$") {
                 $folderName = $matches[1]
                 $wtPath = Join-Path $WorktreeRoot $folderName
             }
-            return $wtPath
+            
+            # Match by directory name, not branch name
+            if ($wtPath -eq $expectedPath) {
+                return $wtPath
+            }
         }
     }
     return $null
@@ -187,6 +195,18 @@ try {
     }
     
     Write-Host "📂 Worktree path: $worktreePath" -ForegroundColor Gray
+    
+    # Show what branch is actually checked out (informational)
+    Push-Location $worktreePath
+    try {
+        $actualBranch = git branch --show-current 2>$null
+        if ($actualBranch -and $actualBranch -ne $Branch) {
+            Write-Host "   Note: Currently on branch '$actualBranch' (worktree was created as '$Branch')" -ForegroundColor Gray
+        }
+    }
+    finally {
+        Pop-Location
+    }
     
     # Stop devcontainer FIRST (before removing worktree to release file locks)
     Remove-DevContainer -WorktreePath $worktreePath

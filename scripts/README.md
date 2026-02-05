@@ -39,6 +39,15 @@ Start a Copilot devcontainer session for a git worktree branch. This enables run
 
 You'll get a shell inside the container where you can run Copilot CLI or other tools.
 
+### Switching Branches
+
+You can switch branches inside a worktree (e.g., `git checkout other-branch`). The scripts identify worktrees by their **directory name**, not the current branch, so:
+
+- `worktree-up.ps1 feature-branch` will reconnect to the container even if you've switched branches
+- `worktree-down.ps1 feature-branch` will remove the worktree even if you've switched branches
+
+The scripts show an informational message when the current branch differs from the worktree name.
+
 ### Prerequisites
 
 - Git with worktree support
@@ -63,12 +72,14 @@ Stop and remove a git worktree, handling container path fixups automatically.
 
 ### What it does
 
-1. **Finds the worktree** for the given branch
+1. **Finds the worktree** by directory name (not current branch)
 2. **Stops and removes the devcontainer**
 3. **Fixes the .git file** if it was modified for container paths
 4. **Removes the worktree** using `git worktree remove`
 5. **Falls back to manual cleanup** if standard removal fails
 6. **Optionally deletes the branch** (prompts you)
+
+The script identifies worktrees by their **directory name** (based on the original branch name), so it works even if you've switched branches inside the worktree.
 
 ### Why this is needed
 
