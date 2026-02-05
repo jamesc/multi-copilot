@@ -355,6 +355,20 @@ $worktreeMetaGitdir = Join-Path $env:MAIN_GIT_PATH "worktrees" $worktreeName "gi
 # Skip container setup if already running - just reconnect
 if ($skipWorktreeSetup) {
     Write-Host "`n🔌 Reconnecting to existing container..." -ForegroundColor Cyan
+    
+    # IMPORTANT: Pre-fix git paths for container before exec
+    # The finally block resets paths to host format after each run,
+    # so we must convert them back to container format before reconnecting
+    Write-Host "🔧 Pre-fixing .git paths for container..." -ForegroundColor Cyan
+    $containerGitPath = "/workspaces/.$projectName-git/worktrees/$worktreeName"
+    Set-Content -Path $worktreeGitFile -Value "gitdir: $containerGitPath" -NoNewline
+    Write-Host "   Set .git to: $containerGitPath" -ForegroundColor Gray
+    
+    if (Test-Path $worktreeMetaGitdir) {
+        Set-Content -Path $worktreeMetaGitdir -Value "/workspaces/$worktreeName" -NoNewline
+        Write-Host "   Set gitdir to: /workspaces/$worktreeName" -ForegroundColor Gray
+    }
+    Write-Host "✅ Git paths pre-configured for container" -ForegroundColor Green
 }
 else {
     # Sync devcontainer config from main repo (worktrees may be created from old commits)
