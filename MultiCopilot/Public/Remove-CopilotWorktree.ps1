@@ -99,11 +99,11 @@ function Remove-CopilotWorktree {
             Write-Host "🔧 Running project cleanup hook..." -ForegroundColor Cyan
             try {
                 & $hookScript -WorktreePath $worktreePath -Branch $Branch -MainRepo $mainRepo
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "✅ Project cleanup hook completed" -ForegroundColor Green
+                if (-not $?) {
+                    Write-Host "⚠️  Project cleanup hook reported failure" -ForegroundColor Yellow
                 }
                 else {
-                    Write-Host "⚠️  Project cleanup hook returned non-zero exit code" -ForegroundColor Yellow
+                    Write-Host "✅ Project cleanup hook completed" -ForegroundColor Green
                 }
             }
             catch {

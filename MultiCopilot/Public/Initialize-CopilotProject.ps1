@@ -96,12 +96,13 @@ function Initialize-CopilotProject {
     if ($PSCmdlet.ShouldProcess($destGitattributes, "Merge .gitattributes entries")) {
         $templateLines = Get-Content $templateGitattributes
         if (Test-Path $destGitattributes) {
-            $existingContent = Get-Content $destGitattributes -Raw
+            $existingLines = Get-Content $destGitattributes
+            $existingLinesTrimmed = $existingLines | ForEach-Object { $_.Trim() }
             $linesToAdd = @()
             foreach ($line in $templateLines) {
                 $trimmed = $line.Trim()
                 if ($trimmed -eq "" -or $trimmed.StartsWith("#")) { continue }
-                if ($existingContent -notmatch [regex]::Escape($trimmed)) {
+                if ($existingLinesTrimmed -notcontains $trimmed) {
                     $linesToAdd += $line
                 }
             }

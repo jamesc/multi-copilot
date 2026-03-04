@@ -143,8 +143,12 @@ function New-CopilotWorktree {
         # Set base branch if not specified
         if (-not $BaseBranch) {
             Push-Location $mainRepo
-            $BaseBranch = Get-DefaultBranch
-            Pop-Location
+            try {
+                $BaseBranch = Get-DefaultBranch
+            }
+            finally {
+                Pop-Location
+            }
             Write-Host "📌 Using default branch: $BaseBranch" -ForegroundColor Gray
         }
 
@@ -499,7 +503,7 @@ function New-CopilotWorktree {
     # Connect to the container and run the command
     # Use try/finally to ensure git paths are reset when command exits
     try {
-        $cmdArgs = @("exec", "--workspace-folder", $worktreePath) + ($Command -split '\s+')
+        $cmdArgs = @("exec", "--workspace-folder", $worktreePath, "bash", "-c", $Command)
         & devcontainer @cmdArgs
     }
     finally {
