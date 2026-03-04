@@ -27,6 +27,15 @@ Start a Copilot devcontainer session for a git worktree branch. This enables run
 
 # Create new branch from main
 .\scripts\worktree-up.ps1 -Branch issue-123 -BaseBranch main
+
+# Run bash instead of copilot
+.\scripts\worktree-up.ps1 feature-branch -Command bash
+
+# Start Amp instead of Copilot
+.\scripts\worktree-up.ps1 feature-branch -Amp
+
+# Force rebuild of the devcontainer
+.\scripts\worktree-up.ps1 feature-branch -Rebuild
 ```
 
 ### What it does
@@ -35,18 +44,9 @@ Start a Copilot devcontainer session for a git worktree branch. This enables run
 2. **Creates worktree** if needed (new branch from base, or existing branch)
 3. **Starts the devcontainer** using `devcontainer up`
 4. **Configures Copilot CLI** with config and MCP servers
-5. **Launches Copilot** in the container
+5. **Launches Copilot** (or specified command) in the container
 
 You'll get a shell inside the container where you can run Copilot CLI or other tools.
-
-### Switching Branches
-
-You can switch branches inside a worktree (e.g., `git checkout other-branch`). The scripts identify worktrees by their **directory name**, not the current branch, so:
-
-- `worktree-up.ps1 feature-branch` will reconnect to the container even if you've switched branches
-- `worktree-down.ps1 feature-branch` will remove the worktree even if you've switched branches
-
-The scripts show an informational message when the current branch differs from the worktree name.
 
 ### Prerequisites
 

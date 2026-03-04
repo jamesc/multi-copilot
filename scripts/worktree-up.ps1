@@ -22,6 +22,12 @@
 .PARAMETER Command
     Command to run in container (default: "copilot")
 
+.PARAMETER Amp
+    Start Amp instead of Copilot (sets Command to "amp")
+
+.PARAMETER Rebuild
+    Force rebuild of the devcontainer image (no cache)
+
 .EXAMPLE
     .\worktree-up.ps1 feature-branch
     
@@ -30,6 +36,12 @@
 
 .EXAMPLE
     .\worktree-up.ps1 feature-branch -Command bash
+
+.EXAMPLE
+    .\worktree-up.ps1 feature-branch -Amp
+
+.EXAMPLE
+    .\worktree-up.ps1 feature-branch -Rebuild
 #>
 
 param(
@@ -43,19 +55,36 @@ param(
     [string]$WorktreeRoot = "",
     
     [Parameter(Mandatory=$false)]
-    [string]$Command = "copilot --yolo"
+    [string]$Command = "copilot --yolo",
+
+    [Parameter(Mandatory=$false)]
+    [switch]$Amp,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$Rebuild
 )
+
+if ($Amp -and $PSBoundParameters.ContainsKey('Command')) {
+    Write-Error "-Amp and -Command are mutually exclusive. Use one or the other."
+    exit 1
+}
+
+if ($Amp) {
+    $Command = "amp"
+}
 
 $ErrorActionPreference = "Stop"
 
 # Show usage if no branch specified
 if (-not $Branch) {
-    Write-Host "Usage: worktree-up.ps1 <branch-name> [-BaseBranch <branch>] [-Command <cmd>]" -ForegroundColor Cyan
+    Write-Host "Usage: worktree-up.ps1 <branch-name> [-BaseBranch <branch>] [-Command <cmd>] [-Amp] [-Rebuild]" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Gray
     Write-Host "  .\scripts\worktree-up.ps1 feature-branch"
     Write-Host "  .\scripts\worktree-up.ps1 issue-123 -BaseBranch main"
     Write-Host "  .\scripts\worktree-up.ps1 feature-branch -Command bash"
+    Write-Host "  .\scripts\worktree-up.ps1 feature-branch -Amp"
+    Write-Host "  .\scripts\worktree-up.ps1 feature-branch -Rebuild"
     exit 0
 }
 
@@ -161,6 +190,27 @@ function Get-ProjectName {
     return Split-Path $RepoPath -Leaf
 }
 
+# Run project-specific setup hook inside container
+function Invoke-WorktreeUpHook {
+    param([string]$WorktreePath)
+    
+    $upHookScript = Join-Path $WorktreePath ".devcontainer" "worktree-up-hook.sh"
+    if (Test-Path $upHookScript) {
+        Write-Host "🔧 Running project setup hook..." -ForegroundColor Cyan
+        $hookOutput = & devcontainer exec --workspace-folder $WorktreePath bash .devcontainer/worktree-up-hook.sh 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ Project setup hook completed" -ForegroundColor Green
+        }
+        else {
+            Write-Host "⚠️  Project setup hook failed" -ForegroundColor Yellow
+            if ($hookOutput) {
+                Write-Host "Hook output:" -ForegroundColor DarkYellow
+                Write-Host $hookOutput
+            }
+        }
+    }
+}
+
 # Check if a devcontainer is running for a worktree path
 function Test-ContainerRunning {
     param([string]$WorktreePath)
@@ -192,6 +242,13 @@ $worktreePath = Join-Path $WorktreeRoot $dirName
 # This handles the case where you've switched branches inside the container
 if (Test-Path $worktreePath) {
     if (Test-ContainerRunning -WorktreePath $worktreePath) {
+        if ($Rebuild) {
+            Write-Host "⚠️  Container already running — cannot rebuild while running." -ForegroundColor Yellow
+            Write-Host "   Run: .\scripts\worktree-down.ps1 $Branch" -ForegroundColor Gray
+            Write-Host "   Then re-run with -Rebuild" -ForegroundColor Gray
+            exit 1
+        }
+
         Write-Host "✅ Container already running for worktree: $dirName" -ForegroundColor Green
         
         # Show what branch is actually checked out (informational only)
@@ -387,6 +444,8 @@ if ($skipWorktreeSetup) {
         Write-Host "   Set gitdir to: /workspaces/$worktreeName" -ForegroundColor Gray
     }
     Write-Host "✅ Git paths pre-configured for container" -ForegroundColor Green
+
+    Invoke-WorktreeUpHook -WorktreePath $worktreePath
 }
 else {
     # Sync devcontainer config from main repo (worktrees may be created from old commits)
@@ -424,18 +483,42 @@ $env:DOCKER_CLI_HINTS = "false"
 # Build and start the container - capture output to get container ID
 # Explicitly mount the main .git directory since ${localEnv:...} doesn't work reliably
 $mountArg = "--mount=type=bind,source=$($env:MAIN_GIT_PATH),target=/workspaces/.$projectName-git"
-Write-Host "Running: devcontainer up --workspace-folder $worktreePath $mountArg" -ForegroundColor Gray
-$output = devcontainer up --workspace-folder $worktreePath $mountArg 2>&1 | ForEach-Object {
+$rebuildArgs = if ($Rebuild) { "--remove-existing-container" } else { "" }
+$displayCmd = "devcontainer up --workspace-folder $worktreePath $mountArg $rebuildArgs".Trim()
+Write-Host "Running: $displayCmd" -ForegroundColor Gray
+
+$upArgs = @("up", "--workspace-folder", $worktreePath, $mountArg)
+if ($Rebuild) {
+    $upArgs += "--remove-existing-container"
+    Write-Host "🔨 Rebuilding devcontainer (removing existing container)..." -ForegroundColor Yellow
+}
+
+$output = & devcontainer @upArgs 2>&1 | ForEach-Object {
     # Filter out PowerShell's stderr wrapper noise and Docker hints
     if ($_ -is [System.Management.Automation.ErrorRecord]) {
         $line = $_.Exception.Message
     } else {
         $line = $_
     }
-    if ($line -and $line -notmatch '^System\.Management\.Automation\.RemoteException' -and $line -notmatch "What's next:|Try Docker Debug|Learn more at https://docs\.docker\.com") {
-        Write-Host $line
+    # Strip devcontainer CLI timestamp prefix (e.g., "[2026-02-06T13:41:03.568Z] ")
+    # so downstream regex filters can match the actual content
+    $stripped = $line -replace '^\[[\d\-T:.Z]+\]\s*', ''
+    # Suppress Docker build noise (layer steps, apt output, download progress, etc.)
+    # Keep devcontainer lifecycle output (postCreateCommand, postStartCommand, etc.)
+    if ($stripped -and
+        $stripped -notmatch '^System\.Management\.Automation\.RemoteException' -and
+        $stripped -notmatch "What's next:|Try Docker Debug|Learn more at https://docs\.docker\.com" -and
+        $stripped -notmatch '^\s*#\d+\s' -and          # Docker BuildKit step lines (#1, #2 [internal], etc.)
+        $stripped -notmatch '^\s*--->' -and              # Legacy Docker builder layer IDs
+        $stripped -notmatch '^(Step \d+/\d+|Removing intermediate|Successfully (built|tagged))' -and
+        $stripped -notmatch '^(Sending build context|COPY|RUN|FROM|ENV|WORKDIR|ARG|LABEL|EXPOSE|CMD|ENTRYPOINT|ADD|VOLUME|USER|SHELL|ONBUILD|STOPSIGNAL|HEALTHCHECK)' -and
+        $stripped -notmatch '^\s*(Get:|Hit:|Ign:|Fetched |Reading |Building )' -and   # apt-get output
+        $stripped -notmatch '^\s*(\d+\.\d+ [kMG]B|Downloading|Unpacking|Setting up|Selecting|Preparing|Processing)' -and
+        $stripped -notmatch '^\s*(sha256:|digest:|resolve |resolved |DONE |CACHED )' -and
+        $stripped -notmatch '^\[[\d/ ]+\]') {            # Docker progress like [1/5]
+        Write-Host $stripped
     }
-    $line  # Pass through to capture
+    $line  # Pass through original (with timestamp) to capture for JSON parsing
 }
 
 if ($LASTEXITCODE -ne 0) {
@@ -459,13 +542,25 @@ Write-Host "`n✨ Container ready!" -ForegroundColor Green
 
 # Set up Copilot CLI config
 Write-Host "🤖 Setting up Copilot CLI config..." -ForegroundColor Cyan
-devcontainer exec --workspace-folder $worktreePath bash -c "mkdir -p ~/.copilot && cp .devcontainer/mcp-config.json ~/.copilot/mcp-config.json && envsubst < .devcontainer/copilot-config.json > ~/.copilot/config.json" 2>$null
+devcontainer exec --workspace-folder $worktreePath bash -c "mkdir -p ~/.copilot && envsubst < .devcontainer/mcp-config.json > ~/.copilot/mcp-config.json && envsubst < .devcontainer/copilot-config.json > ~/.copilot/config.json" 2>$null
 if ($LASTEXITCODE -eq 0) {
     Write-Host "✅ Copilot CLI configured" -ForegroundColor Green
 }
 else {
     Write-Host "⚠️  Could not configure Copilot CLI" -ForegroundColor Yellow
 }
+
+# Set up Amp CLI config
+Write-Host "⚡ Setting up Amp CLI config..." -ForegroundColor Cyan
+devcontainer exec --workspace-folder $worktreePath bash -c "mkdir -p ~/.config/amp && envsubst < .devcontainer/amp-settings.json > ~/.config/amp/settings.json" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✅ Amp CLI configured" -ForegroundColor Green
+}
+else {
+    Write-Host "⚠️  Could not configure Amp CLI" -ForegroundColor Yellow
+}
+
+Invoke-WorktreeUpHook -WorktreePath $worktreePath
 
 # Copy SSH signing key if configured
 if ($env:GIT_SIGNING_KEY) {
@@ -534,23 +629,12 @@ if ($env:GIT_SIGNING_KEY) {
 }
 } # End of: if (-not $skipWorktreeSetup)
 
-# Run project-specific hook if it exists (for custom per-worktree setup like env files)
-# Load from worktree (not mainRepo) so reconnects use the synced version
-$hookScript = Join-Path $worktreePath ".devcontainer\worktree-up-hook.ps1"
-if (Test-Path $hookScript) {
-    Write-Host "🔧 Running project hook..." -ForegroundColor Cyan
-    try {
-        & $hookScript -WorktreePath $worktreePath -Branch $Branch -MainRepo $mainRepo
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "✅ Project hook completed" -ForegroundColor Green
-        }
-        else {
-            Write-Host "⚠️  Project hook returned non-zero exit code" -ForegroundColor Yellow
-        }
-    }
-    catch {
-        Write-Host "⚠️  Project hook failed: $_" -ForegroundColor Yellow
-    }
+# Check AMP_API_KEY if using Amp
+if ($Amp -and -not $env:AMP_API_KEY) {
+    Write-Host "❌ AMP_API_KEY not set. Required for Amp." -ForegroundColor Red
+    Write-Host "   Sign in at: ampcode.com/install" -ForegroundColor Gray
+    Write-Host "   Then set: `$env:AMP_API_KEY = <your-key>" -ForegroundColor Gray
+    exit 1
 }
 
 Write-Host "`nStarting: $Command" -ForegroundColor Cyan
