@@ -6,22 +6,45 @@ Inspired by [Jesse Vincent's workflow](https://blog.fsck.com/2025/10/05/how-im-u
 
 ## Overview
 
-This repository provides reusable infrastructure (Windows host + PowerShell) that enables:
+This repository provides a **PowerShell module** (Windows host) that enables:
 - **Parallel development**: Work on multiple branches simultaneously, each in its own container
 - **Isolated environments**: Each worktree gets its own devcontainer with isolated state
-- **Easy setup**: PowerShell scripts automate worktree creation and container management
-- **Project-agnostic**: Copy these files to any project to enable multi-copilot workflows
+- **Easy setup**: Cmdlets automate worktree creation and container management
+- **Project-agnostic**: Scaffold any project with `Initialize-CopilotProject`
 
 ## Quick Start
 
-### 1. Copy to Your Project
+### 1. Install the Module
 
-Copy the following to your project:
-- `.devcontainer/` - Devcontainer configuration
-- `scripts/` - Worktree management scripts
-- `.gitattributes` - Ensures shell scripts have correct line endings
+**Option A: Clone and import**
 
-### 2. Customize the Devcontainer
+```powershell
+git clone https://github.com/jamesc/multi-copilot.git
+Import-Module ./multi-copilot/MultiCopilot
+```
+
+**Option B: Copy to your modules path**
+
+```powershell
+git clone https://github.com/jamesc/multi-copilot.git
+Copy-Item -Recurse multi-copilot/MultiCopilot "$($env:PSModulePath -split ';' | Select-Object -First 1)/MultiCopilot"
+Import-Module MultiCopilot
+```
+
+### 2. Scaffold Your Project
+
+```powershell
+cd C:\Projects\my-app
+Initialize-CopilotProject
+```
+
+This creates:
+- `.devcontainer/` — Container configuration (Dockerfile, devcontainer.json, etc.)
+- `scripts/smoke-test.sh` — Devcontainer verification script
+- `.gitattributes` — Line ending configuration
+- `.worktrees/` entry in `.gitignore`
+
+### 3. Customize the Devcontainer
 
 Edit `.devcontainer/Dockerfile` to add your project's dependencies (languages, tools, etc.).
 
@@ -29,7 +52,7 @@ Edit `.devcontainer/devcontainer.json` to:
 - Change the `name` to your project name
 - Update VS Code extensions for your tech stack
 
-### 3. Set Environment Variables
+### 4. Set Environment Variables
 
 Set these on your Windows host:
 
@@ -45,17 +68,11 @@ $env:GIT_USER_EMAIL = "your.email@example.com"
 $env:GIT_SIGNING_KEY = "id_ed25519"  # or your key name
 ```
 
-### 4. Start a Worktree Session
-
-**Option A: PowerShell scripts (for parallel Copilot CLI sessions)**
+### 5. Start a Worktree Session
 
 ```powershell
-.\scripts\worktree-up.ps1 feature-branch
+New-CopilotWorktree feature-branch
 ```
-
-**Option B: VS Code (for single-session development)**
-
-Open the folder in VS Code with the Dev Containers extension installed. VS Code will prompt to reopen in container.
 
 This will:
 1. Create a git worktree at `.worktrees/feature-branch/`
@@ -63,28 +80,72 @@ This will:
 3. Configure Copilot CLI
 4. Launch Copilot in the container
 
-### 5. Verify Setup
-
-Inside the container, run:
-
-```bash
-bash scripts/smoke-test.sh
-```
-
 ### 6. Check Status
 
 ```powershell
-.\scripts\worktree-status.ps1
+Get-CopilotWorktree
 ```
 
 ### 7. Clean Up
 
 ```powershell
 # Remove a specific worktree and its container
-.\scripts\worktree-down.ps1 feature-branch
+Remove-CopilotWorktree feature-branch
 
 # Clean up orphaned containers and project volumes (prompts first)
-.\scripts\worktree-cleanup.ps1
+Clear-CopilotWorktree
+```
+
+## Cmdlets
+
+| Cmdlet | Description |
+|--------|-------------|
+| `Initialize-CopilotProject` | Scaffold `.devcontainer/` template into a project |
+| `New-CopilotWorktree` | Create a worktree and start a devcontainer |
+| `Remove-CopilotWorktree` | Remove a worktree and clean up containers |
+| `Get-CopilotWorktree` | Show status of all worktrees and containers |
+| `Clear-CopilotWorktree` | Remove orphaned containers and project volumes |
+
+All cmdlets support `Get-Help`:
+
+```powershell
+Get-Help New-CopilotWorktree -Full
+```
+
+### New-CopilotWorktree
+
+```powershell
+# Basic usage
+New-CopilotWorktree feature-branch
+
+# Create from a specific base branch
+New-CopilotWorktree -Branch issue-123 -BaseBranch main
+
+# Run bash instead of copilot
+New-CopilotWorktree feature-branch -Command bash
+
+# Start Amp instead of Copilot
+New-CopilotWorktree feature-branch -Amp
+
+# Force rebuild of the devcontainer
+New-CopilotWorktree feature-branch -Rebuild
+```
+
+### Remove-CopilotWorktree
+
+```powershell
+Remove-CopilotWorktree feature-branch
+Remove-CopilotWorktree -Branch issue-123 -Force
+Remove-CopilotWorktree feature-branch -WhatIf   # preview what would happen
+```
+
+### Clear-CopilotWorktree
+
+```powershell
+Clear-CopilotWorktree              # Interactive — orphaned containers only
+Clear-CopilotWorktree -DryRun      # Preview only
+Clear-CopilotWorktree -All         # Remove ALL project containers
+Clear-CopilotWorktree -WhatIf      # PowerShell standard preview
 ```
 
 ## How It Works
@@ -95,7 +156,7 @@ Git worktrees allow multiple working directories linked to the same repository. 
 
 Worktrees are created in `.worktrees/` inside your repo (gitignored).
 
-**Branch Switching**: You can switch branches inside a worktree with `git checkout`. The scripts identify worktrees by directory name (not current branch), so `worktree-up` and `worktree-down` work correctly even after switching branches.
+**Branch Switching**: You can switch branches inside a worktree with `git checkout`. The cmdlets identify worktrees by directory name (not current branch), so `New-CopilotWorktree` and `Remove-CopilotWorktree` work correctly even after switching branches.
 
 ### Devcontainers
 
@@ -106,35 +167,41 @@ Each worktree gets its own Docker container with:
 
 ### Path Translation
 
-The tricky part is that git worktrees on Windows use host paths, but inside containers we need container paths. The scripts handle this by:
+The tricky part is that git worktrees on Windows use host paths, but inside containers we need container paths. The cmdlets handle this by:
 1. Mounting the main `.git` directory at a known location
 2. Rewriting worktree `.git` files to use container paths
 3. Restoring host paths when exiting
 
-## File Structure
+## Module Structure
 
 ```
-.devcontainer/
-├── devcontainer.json      # Container configuration
-├── Dockerfile             # Build dependencies (customize this)
-├── copilot-config.json    # Copilot CLI settings (yolo mode)
-├── mcp-config.json        # MCP server configuration
-└── setup-git-auth.sh      # Configure git authentication
-
-scripts/
-├── worktree-up.ps1        # Create worktree + start container
-├── worktree-down.ps1      # Remove worktree + stop container
-├── worktree-status.ps1    # Show all worktrees and container status
-├── worktree-cleanup.ps1   # Clean up orphaned containers
-├── smoke-test.sh          # Verify devcontainer setup
-└── README.md              # Script documentation
+MultiCopilot/
+├── MultiCopilot.psd1              # Module manifest
+├── MultiCopilot.psm1              # Module loader
+├── Public/                        # Exported cmdlets
+│   ├── Initialize-CopilotProject.ps1
+│   ├── New-CopilotWorktree.ps1
+│   ├── Remove-CopilotWorktree.ps1
+│   ├── Get-CopilotWorktree.ps1
+│   └── Clear-CopilotWorktree.ps1
+├── Private/                       # Internal helpers
+│   └── GitHelpers.ps1
+└── Templates/                     # Project scaffold files
+    ├── .devcontainer/
+    │   ├── devcontainer.json
+    │   ├── Dockerfile
+    │   ├── copilot-config.json
+    │   ├── mcp-config.json
+    │   └── setup-git-auth.sh
+    ├── smoke-test.sh
+    └── .gitattributes
 ```
 
 ## Customization
 
 ### Adding MCP Servers
 
-Edit `.devcontainer/mcp-config.json`:
+After scaffolding, edit `.devcontainer/mcp-config.json` in your project:
 
 ```json
 {
@@ -163,9 +230,13 @@ Add to `remoteEnv` in `devcontainer.json`:
 }
 ```
 
+### Project-Specific Worktree Hook
+
+Create `.devcontainer/worktree-up-hook.sh` to run custom setup each time a worktree container starts.
+
 ## Requirements
 
-- Windows with PowerShell 5.1+ (scripts are PowerShell/Windows-focused)
+- Windows with PowerShell 5.1+
 - Git with worktree support
 - Docker Desktop
 - Node.js (for devcontainer CLI)
